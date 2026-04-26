@@ -331,20 +331,37 @@ function pass1BuildScopes(
   }
 
   // Sort by (startLine, startCol) ASC, (endLine, endCol) DESC so outer
-  // scopes appear before their children for parent-resolution.
+  // scopes appear before their children for parent-resolution. When two
+  // candidates have exactly equal ranges (e.g. a `compilation_unit` and
+  // the only top-level scope in the file — see `canParentScope`), Module
+  // sorts first so it lands on the stack ahead of the candidate that will
+  // claim it as parent.
   candidates.sort((a, b) => {
     if (a.range.startLine !== b.range.startLine) return a.range.startLine - b.range.startLine;
     if (a.range.startCol !== b.range.startCol) return a.range.startCol - b.range.startCol;
     if (a.range.endLine !== b.range.endLine) return b.range.endLine - a.range.endLine;
-    return b.range.endCol - a.range.endCol;
+    if (a.range.endCol !== b.range.endCol) return b.range.endCol - a.range.endCol;
+    if (a.kind === b.kind) return 0;
+    if (a.kind === 'Module') return -1;
+    if (b.kind === 'Module') return 1;
+    return 0;
   });
 
   const drafts: ScopeDraft[] = [];
   const stack: Candidate[] = []; // enclosing real scopes, outermost at [0]
 
   for (const cand of candidates) {
-    // Pop the stack until the top strictly contains this candidate.
-    while (stack.length > 0 && !rangeStrictlyContains(stack[stack.length - 1]!.range, cand.range)) {
+    // Pop the stack until the top can parent this candidate (strict
+    // containment, plus the equal-range Module carve-out).
+    while (
+      stack.length > 0 &&
+      !canParentScope(
+        stack[stack.length - 1]!.range,
+        cand.range,
+        stack[stack.length - 1]!.kind,
+        cand.kind,
+      )
+    ) {
       stack.pop();
     }
 
@@ -923,6 +940,38 @@ function rangeStrictlyContains(outer: Range, inner: Range): boolean {
     outer.endLine > inner.endLine ||
     (outer.endLine === inner.endLine && outer.endCol >= inner.endCol);
   return startsBefore && endsAfter;
+}
+
+/**
+ * Whether `outer` (kind `outerKind`) is a valid parent for `inner` (kind
+ * `innerKind`) by tree-sitter range geometry.
+ *
+ * Strict containment is the general rule. The single carve-out is the
+ * `Module`/non-Module pair whose ranges are exactly equal — this happens
+ * naturally when tree-sitter reports identical byte spans for the
+ * `compilation_unit` and the file's single top-level scope (e.g. a C# file
+ * consisting of nothing but `namespace X { ... }` with no leading or
+ * trailing trivia outside the namespace's `{}` body). The `Module`
+ * is the universal outer of any file-level scope by language semantics, so
+ * coincident ranges should not break the parent chain. The `rangesEqual`
+ * Module carve-out is direction-asymmetric: only Module-as-outer parents
+ * a same-range non-Module, never the reverse, so the relationship stays
+ * acyclic and `buildScopeTree`'s parent-must-share-filePath / no-cycle
+ * invariants continue to hold.
+ *
+ * `rangeStrictlyContains` keeps its strict semantics so position-index
+ * lookups, hook-side range comparisons, and other call sites are
+ * unchanged.
+ */
+function canParentScope(
+  outer: Range,
+  inner: Range,
+  outerKind: ScopeKind,
+  innerKind: ScopeKind,
+): boolean {
+  if (rangeStrictlyContains(outer, inner)) return true;
+  if (outerKind === 'Module' && innerKind !== 'Module' && rangesEqual(outer, inner)) return true;
+  return false;
 }
 
 /**
