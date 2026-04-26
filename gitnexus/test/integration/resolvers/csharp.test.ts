@@ -2420,3 +2420,52 @@ describe('C# class-name receiver write ACCESSES (merged Case 2 kind-aware branch
     expect(stray).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regression: scope-extractor freezes binding arrays per name (see
+// `scope-extractor.ts: frozenBindings.set(name, Object.freeze(refs.slice()))`).
+// `populateCsharpNamespaceSiblings` then reads `scopeBindings.get(name)`
+// and tries to `existing.push(...)` on the frozen array, throwing
+// `TypeError: Cannot add property N, object is not extensible` at
+// `namespace-siblings.ts` and abandoning scope resolution for the
+// entire repo. Triggered when a file locally declares a class with the
+// same simple name as a class in a `using`-imported sibling namespace.
+// Reproduced live on a real-world WinForms repo (PersistentWindows).
+// Fix: copy-on-read the existing entry before mutating.
+// ---------------------------------------------------------------------------
+
+describe('C# regression: namespace-siblings injection vs frozen bindings', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(CROSS_FILE_FIXTURES, 'csharp-frozen-binding-collision'),
+      () => {},
+    );
+  }, 60000);
+
+  it('finishes scope resolution without throwing on collision', () => {
+    // `result` is non-null only when the full pipeline completed.
+    // Pre-fix this `beforeAll` would reject with the "Cannot add
+    // property N, object is not extensible" error from
+    // `populateCsharpNamespaceSiblings`.
+    expect(result).toBeDefined();
+  });
+
+  it('detects both User declarations (cross-file sibling + local)', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    // Two `User` classes — one in Models, one in App — plus Program.
+    expect(classes.filter((n) => n === 'User').length).toBe(2);
+    expect(classes).toContain('Program');
+  });
+
+  it('still resolves the local User binding (origin:local shadows namespace)', () => {
+    // `new User()` inside Program.Run() must point at the local
+    // `Collision.App.User`, not `Collision.Models.User`.
+    const calls = getRelationships(result, 'CALLS');
+    const newUserCall = calls.find(
+      (c) => c.source === 'Run' && c.target === 'User' && c.targetFilePath.includes('App'),
+    );
+    expect(newUserCall).toBeDefined();
+  });
+});

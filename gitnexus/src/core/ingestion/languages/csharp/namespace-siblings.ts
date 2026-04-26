@@ -308,7 +308,13 @@ export function populateCsharpNamespaceSiblings(
           scopeBindings = new Map<string, BindingRef[]>();
           finalized.set(moduleScope.id, scopeBindings);
         }
-        const existing = scopeBindings.get(simpleName) ?? [];
+        // Copy on read: scope-extractor.ts freezes per-name binding
+        // arrays via `Object.freeze(refs.slice())` (search:
+        // scope-extractor.ts `frozenBindings.set(name, Object.freeze`).
+        // If the populator hits a name pre-populated by the extractor,
+        // mutating the returned array throws "Cannot add property N,
+        // object is not extensible". Spread to a fresh mutable copy.
+        const existing: BindingRef[] = [...(scopeBindings.get(simpleName) ?? [])];
         if (existing.some((b) => b.def.nodeId === memberDef.nodeId)) continue;
         existing.push({ def: memberDef, origin: 'import' });
         scopeBindings.set(simpleName, existing);
@@ -342,7 +348,8 @@ export function populateCsharpNamespaceSiblings(
           scopeBindings = new Map<string, BindingRef[]>();
           finalized.set(moduleScope.id, scopeBindings);
         }
-        const existing = scopeBindings.get(simpleName) ?? [];
+        // Copy on read — see `import` site above for rationale.
+        const existing: BindingRef[] = [...(scopeBindings.get(simpleName) ?? [])];
         if (existing.some((b) => b.def.nodeId === def.nodeId)) continue;
         existing.push({ def, origin: 'namespace' });
         scopeBindings.set(simpleName, existing);
@@ -378,7 +385,8 @@ export function populateCsharpNamespaceSiblings(
         const local = bucket.scopes.find((s) => s.filePath === filePath)?.scope.bindings.get(name);
         if (local !== undefined && local.some((b) => b.origin === 'local')) continue;
 
-        const existing = scopeBindings.get(name) ?? [];
+        // Copy on read — see import-site comment above for rationale.
+        const existing: BindingRef[] = [...(scopeBindings.get(name) ?? [])];
         for (const def of defs) {
           if (def.filePath === filePath) continue; // don't self-reference
           if (existing.some((b) => b.def.nodeId === def.nodeId)) continue;
