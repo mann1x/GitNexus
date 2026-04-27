@@ -260,7 +260,7 @@ function rangesEqual(a: Range, b: Range): boolean {
  * helper in `scope-extractor.ts` so `pass1BuildScopes` and the validator
  * agree on what a well-formed parent edge looks like.
  */
-function canParentScope(
+export function canParentScope(
   outer: Range,
   inner: Range,
   outerKind: Scope['kind'],

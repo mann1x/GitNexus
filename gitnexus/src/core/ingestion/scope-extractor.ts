@@ -74,7 +74,7 @@ import type {
   SymbolDefinition,
   TypeRef,
 } from 'gitnexus-shared';
-import { buildPositionIndex, buildScopeTree, makeScopeId } from 'gitnexus-shared';
+import { buildPositionIndex, buildScopeTree, canParentScope, makeScopeId } from 'gitnexus-shared';
 import type { LanguageProvider } from './language-provider.js';
 
 // ─── Narrow hook surface the extractor actually uses ───────────────────────
@@ -922,56 +922,6 @@ function rangesEqual(a: Range, b: Range): boolean {
     a.endLine === b.endLine &&
     a.endCol === b.endCol
   );
-}
-
-function rangeStrictlyContains(outer: Range, inner: Range): boolean {
-  if (
-    outer.startLine === inner.startLine &&
-    outer.startCol === inner.startCol &&
-    outer.endLine === inner.endLine &&
-    outer.endCol === inner.endCol
-  ) {
-    return false;
-  }
-  const startsBefore =
-    outer.startLine < inner.startLine ||
-    (outer.startLine === inner.startLine && outer.startCol <= inner.startCol);
-  const endsAfter =
-    outer.endLine > inner.endLine ||
-    (outer.endLine === inner.endLine && outer.endCol >= inner.endCol);
-  return startsBefore && endsAfter;
-}
-
-/**
- * Whether `outer` (kind `outerKind`) is a valid parent for `inner` (kind
- * `innerKind`) by tree-sitter range geometry.
- *
- * Strict containment is the general rule. The single carve-out is the
- * `Module`/non-Module pair whose ranges are exactly equal — this happens
- * naturally when tree-sitter reports identical byte spans for the
- * `compilation_unit` and the file's single top-level scope (e.g. a C# file
- * consisting of nothing but `namespace X { ... }` with no leading or
- * trailing trivia outside the namespace's `{}` body). The `Module`
- * is the universal outer of any file-level scope by language semantics, so
- * coincident ranges should not break the parent chain. The `rangesEqual`
- * Module carve-out is direction-asymmetric: only Module-as-outer parents
- * a same-range non-Module, never the reverse, so the relationship stays
- * acyclic and `buildScopeTree`'s parent-must-share-filePath / no-cycle
- * invariants continue to hold.
- *
- * `rangeStrictlyContains` keeps its strict semantics so position-index
- * lookups, hook-side range comparisons, and other call sites are
- * unchanged.
- */
-function canParentScope(
-  outer: Range,
-  inner: Range,
-  outerKind: ScopeKind,
-  innerKind: ScopeKind,
-): boolean {
-  if (rangeStrictlyContains(outer, inner)) return true;
-  if (outerKind === 'Module' && innerKind !== 'Module' && rangesEqual(outer, inner)) return true;
-  return false;
 }
 
 /**
