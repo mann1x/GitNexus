@@ -220,6 +220,100 @@ describe('Shell injection regression', () => {
   }
 });
 
+// ─── Source code regression: windowsHide:true on every spawnSync ────
+
+/**
+ * Every ``spawnSync`` call in the hook layer must pass
+ * ``windowsHide: true`` in its options object. Without it, Node's
+ * ``child_process`` module asks ``CreateProcess`` to use
+ * ``STARTF_USESHOWWINDOW`` with ``SW_SHOWDEFAULT`` and a black console
+ * window flashes onto the user's desktop for each call. Under active
+ * Claude Code use that's 2–3 flashes per Edit/Write tool call —
+ * unusable in practice on Windows.
+ *
+ * ``windowsHide`` is a no-op on POSIX (silently dropped), so the flag
+ * is safe to require unconditionally.
+ *
+ * The check is source-level rather than behavioural because:
+ *   - the flag's effect is observable only on Windows;
+ *   - GitHub Actions runs vitest on Linux for the hook tests;
+ *   - regressing this is easy (every new spawnSync site has to
+ *     remember to add it), and a runtime check on a Windows-only CI
+ *     leg would still let a PR land on the main branch first.
+ */
+describe('windowsHide regression', () => {
+  // Every file in the hook layer. Keep this list in sync with the
+  // ``hooks/`` directories at the repo root + the cursor-integration
+  // sibling — any new hook file MUST be added here AND must contain
+  // ``windowsHide: true`` next to every spawnSync invocation.
+  const HOOK_FILES: Array<readonly [string, string]> = [
+    ['gitnexus/hooks/claude/gitnexus-hook.cjs', CJS_HOOK],
+    [
+      'gitnexus/hooks/claude/hook-db-lock-probe.cjs',
+      path.resolve(__dirname, '..', '..', 'hooks', 'claude', 'hook-db-lock-probe.cjs'),
+    ],
+    ['gitnexus-claude-plugin/hooks/gitnexus-hook.js', PLUGIN_HOOK],
+    [
+      'gitnexus-claude-plugin/hooks/hook-db-lock-probe.cjs',
+      path.resolve(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'gitnexus-claude-plugin',
+        'hooks',
+        'hook-db-lock-probe.cjs',
+      ),
+    ],
+    [
+      'gitnexus-cursor-integration/hooks/gitnexus-hook.cjs',
+      path.resolve(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'gitnexus-cursor-integration',
+        'hooks',
+        'gitnexus-hook.cjs',
+      ),
+    ],
+  ];
+
+  for (const [label, file] of HOOK_FILES) {
+    it(`${label}: every spawnSync options object contains windowsHide: true`, () => {
+      // The file must exist — silent-skip would mask a deletion.
+      expect(fs.existsSync(file)).toBe(true);
+      const source = fs.readFileSync(file, 'utf-8');
+
+      // Count spawnSync invocations (excluding comments + import line).
+      // The pattern below matches ``spawnSync(`` as a function call —
+      // not as a JSDoc reference or destructure.
+      const spawnCallRegex = /(^|[^a-zA-Z0-9_$])spawnSync\s*\(/gm;
+      const lines = source.split('\n');
+      const codeLines = lines
+        .map((l, i) => ({ l, i }))
+        .filter(({ l }) => {
+          const t = l.trim();
+          // Drop pure-comment lines so JSDoc / inline mentions of
+          // spawnSync in prose don't inflate the count.
+          if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return false;
+          return true;
+        });
+      const codeSource = codeLines.map(({ l }) => l).join('\n');
+      const spawnCount = (codeSource.match(spawnCallRegex) ?? []).length;
+      const hideCount = (codeSource.match(/windowsHide\s*:\s*true/g) ?? []).length;
+
+      // Every spawnSync must be paired with at least one windowsHide
+      // immediately following inside the options object. We don't try
+      // to match the brace structure — same count is sufficient as a
+      // proxy because every spawnSync in these files passes an
+      // options object literal (no helper indirection).
+      expect(spawnCount).toBeGreaterThan(0); // sanity: catch a deletion
+      expect(hideCount).toBe(spawnCount);
+    });
+  }
+});
+
 // ─── Source code regression: .cmd extensions for Windows ─────────────
 
 describe('Windows .cmd extension handling', () => {
