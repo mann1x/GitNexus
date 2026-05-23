@@ -290,7 +290,10 @@ describe('windowsHide regression', () => {
   // plus the explicit ``await import('child_process')`` callers in
   // local-backend.ts.
   const SRC_FILES: Array<readonly [string, string]> = [
-    ['gitnexus/src/cli/analyze.ts', path.resolve(__dirname, '..', '..', 'src', 'cli', 'analyze.ts')],
+    [
+      'gitnexus/src/cli/analyze.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'cli', 'analyze.ts'),
+    ],
     ['gitnexus/src/cli/setup.ts', path.resolve(__dirname, '..', '..', 'src', 'cli', 'setup.ts')],
     ['gitnexus/src/cli/wiki.ts', path.resolve(__dirname, '..', '..', 'src', 'cli', 'wiki.ts')],
     [
@@ -355,7 +358,8 @@ describe('windowsHide regression', () => {
    * ``.exec()``; we explicitly drop it).
    */
   function countSpawnCalls(codeSource: string): number {
-    const re = /(^|[^a-zA-Z0-9_$.])(spawn|spawnSync|execFile|execFileSync|execFileAsync|execSync)\s*\(/gm;
+    const re =
+      /(^|[^a-zA-Z0-9_$.])(spawn|spawnSync|execFile|execFileSync|execFileAsync|execSync)\s*\(/gm;
     let count = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(codeSource)) !== null) {

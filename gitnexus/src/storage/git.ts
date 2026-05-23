@@ -6,7 +6,11 @@ import path from 'path';
 
 export const isGitRepo = (repoPath: string): boolean => {
   try {
-    execSync('git rev-parse --is-inside-work-tree', { cwd: repoPath, stdio: 'ignore', windowsHide: true });
+    execSync('git rev-parse --is-inside-work-tree', {
+      cwd: repoPath,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;
