@@ -325,6 +325,11 @@ describe('windowsHide regression', () => {
       'gitnexus/src/server/git-clone.ts',
       path.resolve(__dirname, '..', '..', 'src', 'server', 'git-clone.ts'),
     ],
+    // New post-upstream-merge (May 2026 sync):
+    [
+      'gitnexus/src/storage/git.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'storage', 'git.ts'),
+    ],
   ];
 
   /**
