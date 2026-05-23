@@ -146,6 +146,7 @@ function ensureHeap(): boolean {
   try {
     execFileSync(process.execPath, [...cliFlags, ...process.argv.slice(1)], {
       stdio: 'inherit',
+      windowsHide: true,
       env: { ...process.env, NODE_OPTIONS: `${nodeOpts} ${HEAP_FLAG}`.trim() },
     });
   } catch (e: unknown) {
