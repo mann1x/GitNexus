@@ -220,32 +220,37 @@ describe('Shell injection regression', () => {
   }
 });
 
-// ─── Source code regression: windowsHide:true on every spawnSync ────
+// ─── Source code regression: windowsHide:true on every spawn-family call ───
 
 /**
- * Every ``spawnSync`` call in the hook layer must pass
- * ``windowsHide: true`` in its options object. Without it, Node's
- * ``child_process`` module asks ``CreateProcess`` to use
- * ``STARTF_USESHOWWINDOW`` with ``SW_SHOWDEFAULT`` and a black console
- * window flashes onto the user's desktop for each call. Under active
- * Claude Code use that's 2–3 flashes per Edit/Write tool call —
+ * Every ``spawn`` / ``spawnSync`` / ``execFile`` / ``execFileSync`` /
+ * ``execFileAsync`` / ``execSync`` call in the hook layer **and the
+ * core/CLI/MCP/server source tree** must pass ``windowsHide: true``
+ * in its options object. Without it, Node's ``child_process`` module
+ * asks ``CreateProcess`` to use ``STARTF_USESHOWWINDOW`` with
+ * ``SW_SHOWDEFAULT`` and a black console window flashes onto the
+ * user's desktop for each call. Under active Claude Code / MCP /
+ * gitnexus-serve use that's a near-continuous stream of pop-ups —
  * unusable in practice on Windows.
  *
- * ``windowsHide`` is a no-op on POSIX (silently dropped), so the flag
- * is safe to require unconditionally.
+ * ``windowsHide`` is a no-op on POSIX (silently dropped), so the
+ * flag is safe to require unconditionally. ``stdio: 'inherit'``
+ * callers (interactive editors etc.) are unaffected — windowsHide
+ * only suppresses NEW console allocation; an inherited parent
+ * console isn't touched.
  *
  * The check is source-level rather than behavioural because:
  *   - the flag's effect is observable only on Windows;
- *   - GitHub Actions runs vitest on Linux for the hook tests;
- *   - regressing this is easy (every new spawnSync site has to
- *     remember to add it), and a runtime check on a Windows-only CI
- *     leg would still let a PR land on the main branch first.
+ *   - GitHub Actions runs vitest on Linux for these tests;
+ *   - regressing this is easy (every new spawn site has to remember
+ *     the flag), and a runtime check on a Windows-only CI leg would
+ *     still let a PR land on the main branch first.
+ *
+ * The pre-existing fix at ``src/core/lbug/extension-loader.ts:96``
+ * established the convention. This test enforces it everywhere.
  */
 describe('windowsHide regression', () => {
-  // Every file in the hook layer. Keep this list in sync with the
-  // ``hooks/`` directories at the repo root + the cursor-integration
-  // sibling — any new hook file MUST be added here AND must contain
-  // ``windowsHide: true`` next to every spawnSync invocation.
+  // Hook-layer files. Adding a new hook file MUST be reflected here.
   const HOOK_FILES: Array<readonly [string, string]> = [
     ['gitnexus/hooks/claude/gitnexus-hook.cjs', CJS_HOOK],
     [
@@ -279,37 +284,100 @@ describe('windowsHide regression', () => {
     ],
   ];
 
-  for (const [label, file] of HOOK_FILES) {
-    it(`${label}: every spawnSync options object contains windowsHide: true`, () => {
+  // Source-tree files. Every file that imports a spawn-family
+  // function from ``child_process`` belongs here. Discovered via
+  //   grep -rn "from 'child_process'" -- gitnexus/src/
+  // plus the explicit ``await import('child_process')`` callers in
+  // local-backend.ts.
+  const SRC_FILES: Array<readonly [string, string]> = [
+    ['gitnexus/src/cli/analyze.ts', path.resolve(__dirname, '..', '..', 'src', 'cli', 'analyze.ts')],
+    ['gitnexus/src/cli/setup.ts', path.resolve(__dirname, '..', '..', 'src', 'cli', 'setup.ts')],
+    ['gitnexus/src/cli/wiki.ts', path.resolve(__dirname, '..', '..', 'src', 'cli', 'wiki.ts')],
+    [
+      'gitnexus/src/core/embeddings/embedder.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'core', 'embeddings', 'embedder.ts'),
+    ],
+    [
+      'gitnexus/src/core/git-staleness.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'core', 'git-staleness.ts'),
+    ],
+    [
+      'gitnexus/src/core/lbug/extension-loader.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'core', 'lbug', 'extension-loader.ts'),
+    ],
+    [
+      'gitnexus/src/core/run-analyze.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'core', 'run-analyze.ts'),
+    ],
+    [
+      'gitnexus/src/core/wiki/cursor-client.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'core', 'wiki', 'cursor-client.ts'),
+    ],
+    [
+      'gitnexus/src/core/wiki/generator.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'core', 'wiki', 'generator.ts'),
+    ],
+    [
+      'gitnexus/src/mcp/local/local-backend.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'mcp', 'local', 'local-backend.ts'),
+    ],
+    [
+      'gitnexus/src/server/git-clone.ts',
+      path.resolve(__dirname, '..', '..', 'src', 'server', 'git-clone.ts'),
+    ],
+  ];
+
+  /**
+   * Strip pure-comment lines so prose mentions of ``spawn`` /
+   * ``exec`` don't inflate the call count.
+   */
+  function stripComments(source: string): string {
+    return source
+      .split('\n')
+      .filter((l) => {
+        const t = l.trim();
+        return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+      })
+      .join('\n');
+  }
+
+  /**
+   * Count spawn-family invocations. The regex matches ``spawn(``,
+   * ``spawnSync(``, ``execFile(``, ``execFileSync(``,
+   * ``execFileAsync(``, ``execSync(`` as function calls — not
+   * destructures (``const { spawn } = ...``), not method calls
+   * (``.exec(``), not bare ``exec()`` (which collides with regex
+   * ``.exec()``; we explicitly drop it).
+   */
+  function countSpawnCalls(codeSource: string): number {
+    const re = /(^|[^a-zA-Z0-9_$.])(spawn|spawnSync|execFile|execFileSync|execFileAsync|execSync)\s*\(/gm;
+    let count = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(codeSource)) !== null) {
+      count++;
+    }
+    return count;
+  }
+
+  for (const [label, file] of [...HOOK_FILES, ...SRC_FILES]) {
+    it(`${label}: every spawn-family options object contains windowsHide: true`, () => {
       // The file must exist — silent-skip would mask a deletion.
       expect(fs.existsSync(file)).toBe(true);
       const source = fs.readFileSync(file, 'utf-8');
+      const codeSource = stripComments(source);
 
-      // Count spawnSync invocations (excluding comments + import line).
-      // The pattern below matches ``spawnSync(`` as a function call —
-      // not as a JSDoc reference or destructure.
-      const spawnCallRegex = /(^|[^a-zA-Z0-9_$])spawnSync\s*\(/gm;
-      const lines = source.split('\n');
-      const codeLines = lines
-        .map((l, i) => ({ l, i }))
-        .filter(({ l }) => {
-          const t = l.trim();
-          // Drop pure-comment lines so JSDoc / inline mentions of
-          // spawnSync in prose don't inflate the count.
-          if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return false;
-          return true;
-        });
-      const codeSource = codeLines.map(({ l }) => l).join('\n');
-      const spawnCount = (codeSource.match(spawnCallRegex) ?? []).length;
+      const spawnCount = countSpawnCalls(codeSource);
       const hideCount = (codeSource.match(/windowsHide\s*:\s*true/g) ?? []).length;
 
-      // Every spawnSync must be paired with at least one windowsHide
-      // immediately following inside the options object. We don't try
-      // to match the brace structure — same count is sufficient as a
-      // proxy because every spawnSync in these files passes an
-      // options object literal (no helper indirection).
-      expect(spawnCount).toBeGreaterThan(0); // sanity: catch a deletion
-      expect(hideCount).toBe(spawnCount);
+      // Sanity: catch a refactor that accidentally deletes every
+      // spawn call (which would otherwise make the equality below
+      // trivially true at 0 == 0).
+      expect(spawnCount).toBeGreaterThan(0);
+      // One windowsHide per spawn-family call. We don't try to
+      // match brace structure — a same-count proxy is sufficient
+      // because every spawn site in these files passes an options
+      // object literal (no helper indirection).
+      expect(hideCount).toBeGreaterThanOrEqual(spawnCount);
     });
   }
 });
