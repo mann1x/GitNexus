@@ -94,6 +94,7 @@ function runGit(dir: string, args: string[]) {
     cwd: dir,
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
   });
   if (result.status !== 0) {
     const message = result.stderr || result.stdout || result.error?.message || 'unknown error';
@@ -361,8 +362,7 @@ describe('windowsHide regression', () => {
     const re =
       /(^|[^a-zA-Z0-9_$.])(spawn|spawnSync|execFile|execFileSync|execFileAsync|execSync)\s*\(/gm;
     let count = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(codeSource)) !== null) {
+    while (re.exec(codeSource) !== null) {
       count++;
     }
     return count;
@@ -386,7 +386,7 @@ describe('windowsHide regression', () => {
       // match brace structure — a same-count proxy is sufficient
       // because every spawn site in these files passes an options
       // object literal (no helper indirection).
-      expect(hideCount).toBeGreaterThanOrEqual(spawnCount);
+      expect(hideCount).toBe(spawnCount);
     });
   }
 });
